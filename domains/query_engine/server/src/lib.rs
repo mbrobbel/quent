@@ -3,12 +3,15 @@
 
 //! Utilities for server implementations
 
-use crate::{analyzer_cache::AnalyzerCache, state::ServiceState, timeline_cache::TimelineCache};
-use axum::Router as AxumRouter;
+use crate::{
+    analyzer_cache::AnalyzerCache, state::ServiceState, timeline_cache::TimelineCache,
+    viewer::UiAssets,
+};
+use axum::{Extension, Router as AxumRouter, routing::get};
 use quent_collector::server::{CollectorService, CollectorServiceOptions};
 use quent_collector_proto::collector_server::CollectorServer;
 use quent_query_engine_analyzer::ui::UiAnalyzer;
-use std::hash::Hash;
+use std::{hash::Hash, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use tonic::transport::{Server as GrpcServer, server::Router};
@@ -19,6 +22,7 @@ pub mod error;
 mod state;
 mod timeline_cache;
 mod ui;
+pub mod viewer;
 
 pub fn initialize_tracing(log_level: &str) {
     use tracing_subscriber::{
@@ -67,6 +71,24 @@ where
     for<'de> <A as UiAnalyzer>::TimelineGlobalParams: serde::Deserialize<'de>,
     for<'de> <A as UiAnalyzer>::TimelineParams: serde::Deserialize<'de>,
 {
+    analyzer_service_router_with_assets::<A>(importer, lister, cors, UiAssets::Default)
+}
+
+pub fn analyzer_service_router_with_assets<A>(
+    importer: Box<analyzer_cache::ImporterFn<A>>,
+    lister: Box<analyzer_cache::ListerFn>,
+    cors: Option<String>,
+    ui_assets: UiAssets,
+) -> Result<AxumRouter, Box<dyn std::error::Error>>
+where
+    A: UiAnalyzer + Send + Sync + 'static,
+    <A as UiAnalyzer>::EntityRef: serde::Serialize,
+    <A as UiAnalyzer>::TimelineGlobalParams:
+        Send + Sync + Clone + serde::Serialize + Hash + Eq + 'static,
+    <A as UiAnalyzer>::TimelineParams: Send + Sync + Clone + serde::Serialize + Hash + Eq + 'static,
+    for<'de> <A as UiAnalyzer>::TimelineGlobalParams: serde::Deserialize<'de>,
+    for<'de> <A as UiAnalyzer>::TimelineParams: serde::Deserialize<'de>,
+{
     let state = ServiceState {
         analyzers: AnalyzerCache::<A>::new(importer, lister),
         timelines: TimelineCache::new(),
@@ -95,9 +117,19 @@ where
         http_routes = http_routes.layer(cors);
     }
 
-    #[cfg(feature = "ui")]
-    {
-        http_routes = http_routes.fallback(axum::routing::get(ui::embedded::serve));
+    match ui_assets {
+        UiAssets::Default => {
+            #[cfg(feature = "ui")]
+            {
+                http_routes = http_routes.fallback(get(ui::embedded::serve));
+            }
+        }
+        UiAssets::Directory(path) => {
+            http_routes = http_routes
+                .fallback(get(viewer::serve_static_dir))
+                .layer(Extension(Arc::new(path)));
+        }
+        UiAssets::None => {}
     }
 
     Ok(http_routes)

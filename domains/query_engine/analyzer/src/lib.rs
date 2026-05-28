@@ -33,6 +33,7 @@ use crate::{
 };
 
 // Entity mods
+pub mod basic_ui;
 pub mod engine;
 pub mod operator;
 pub mod plan;

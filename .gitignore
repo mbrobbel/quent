@@ -10,3 +10,6 @@ tarpaulin-report.html
 *.tsbuildinfo
 docs/agents/
 .cursor
+
+# Local quent-open config (per-user API URL, token env, viewers)
+/quent-open.toml

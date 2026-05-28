@@ -19,6 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let output = std::process::Command::new("pnpm")
                 .args(args)
                 .current_dir(&ui_dir)
+                .env("CI", "true")
                 .output()?;
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Vite prefixes warnings with "(!)".

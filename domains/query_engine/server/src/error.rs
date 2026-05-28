@@ -16,6 +16,8 @@ pub enum ServerError {
     Io(#[from] std::io::Error),
     #[error("cache error: {0}")]
     Cache(String),
+    #[error("artifact error: {0}")]
+    Artifact(String),
     #[error("task join error: {0}")]
     Join(#[from] tokio::task::JoinError),
     #[error("time error: {0}")]
@@ -30,6 +32,7 @@ impl From<ServerError> for StatusCode {
             ServerError::Importer(_)
             | ServerError::Analyzer(_)
             | ServerError::Io(_)
+            | ServerError::Artifact(_)
             | ServerError::Cache(_)
             | ServerError::Join(_)
             | ServerError::Time(_) => StatusCode::INTERNAL_SERVER_ERROR,

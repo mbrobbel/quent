@@ -3,7 +3,7 @@
 
 //! Exporter dumping events as newline-delimited JSON objects into a file.
 use std::{
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Cursor},
     marker::PhantomData,
     path::PathBuf,
 };
@@ -89,26 +89,45 @@ pub struct NdjsonImporterOptions {
     pub path: PathBuf,
 }
 
-pub struct NdjsonImporter<T> {
-    reader: BufReader<std::fs::File>,
+pub struct NdjsonImporter<T, R = BufReader<std::fs::File>> {
+    reader: R,
     _phantom: PhantomData<T>,
 }
 
-impl<T> NdjsonImporter<T> {
+impl<T> NdjsonImporter<T, BufReader<std::fs::File>> {
     pub fn try_new(options: &NdjsonImporterOptions) -> ImporterResult<Self> {
         let file = std::fs::File::open(&options.path)?;
-        Ok(Self {
-            reader: BufReader::new(file),
-            _phantom: Default::default(),
-        })
+        Ok(Self::from_reader(BufReader::new(file)))
     }
 }
 
-impl<T> Importer<T> for NdjsonImporter<T> where T: for<'de> Deserialize<'de> {}
+impl<T, R> NdjsonImporter<T, R> {
+    pub fn from_reader(reader: R) -> Self
+    where
+        R: BufRead,
+    {
+        Self {
+            reader,
+            _phantom: Default::default(),
+        }
+    }
 
-impl<T> Iterator for NdjsonImporter<T>
+    pub fn from_bytes(bytes: Vec<u8>) -> NdjsonImporter<T, Cursor<Vec<u8>>> {
+        NdjsonImporter::from_reader(Cursor::new(bytes))
+    }
+}
+
+impl<T, R> Importer<T> for NdjsonImporter<T, R>
 where
     T: for<'de> Deserialize<'de>,
+    R: BufRead,
+{
+}
+
+impl<T, R> Iterator for NdjsonImporter<T, R>
+where
+    T: for<'de> Deserialize<'de>,
+    R: BufRead,
 {
     type Item = Event<T>;
 
@@ -131,5 +150,27 @@ where
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use quent_events::Event;
+    use uuid::Uuid;
+
+    use super::NdjsonImporter;
+
+    #[test]
+    fn imports_from_bytes() {
+        let event = Event::new(Uuid::nil(), 42, "payload".to_string());
+        let bytes = format!("{}\n", serde_json::to_string(&event).unwrap()).into_bytes();
+
+        let mut importer = NdjsonImporter::<String>::from_bytes(bytes);
+        let imported = importer.next().unwrap();
+
+        assert_eq!(imported.id, event.id);
+        assert_eq!(imported.timestamp, event.timestamp);
+        assert_eq!(imported.data, event.data);
+        assert!(importer.next().is_none());
     }
 }

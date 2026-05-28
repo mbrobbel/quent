@@ -5,7 +5,11 @@
 //!
 //! File format: sequence of length-prefixed records.
 //! Each record: `[4 bytes: payload length as u32 BE][payload: msgpack-encoded Event<T>]`
-use std::{io::BufReader, marker::PhantomData, path::PathBuf};
+use std::{
+    io::{BufReader, Cursor, Read},
+    marker::PhantomData,
+    path::PathBuf,
+};
 
 use quent_events::Event;
 use quent_exporter_types::{Exporter, ExporterError, ExporterResult, Importer, ImporterResult};
@@ -87,31 +91,49 @@ pub struct MsgpackImporterOptions {
     pub path: PathBuf,
 }
 
-pub struct MsgpackImporter<T> {
-    reader: BufReader<std::fs::File>,
+pub struct MsgpackImporter<T, R = BufReader<std::fs::File>> {
+    reader: R,
     _phantom: PhantomData<T>,
 }
 
-impl<T> MsgpackImporter<T> {
+impl<T> MsgpackImporter<T, BufReader<std::fs::File>> {
     pub fn try_new(options: &MsgpackImporterOptions) -> ImporterResult<Self> {
         let file = std::fs::File::open(&options.path)?;
-        Ok(Self {
-            reader: BufReader::new(file),
-            _phantom: Default::default(),
-        })
+        Ok(Self::from_reader(BufReader::new(file)))
     }
 }
 
-impl<T> Importer<T> for MsgpackImporter<T> where T: for<'de> Deserialize<'de> {}
+impl<T, R> MsgpackImporter<T, R> {
+    pub fn from_reader(reader: R) -> Self
+    where
+        R: Read,
+    {
+        Self {
+            reader,
+            _phantom: Default::default(),
+        }
+    }
 
-impl<T> Iterator for MsgpackImporter<T>
+    pub fn from_bytes(bytes: Vec<u8>) -> MsgpackImporter<T, Cursor<Vec<u8>>> {
+        MsgpackImporter::from_reader(Cursor::new(bytes))
+    }
+}
+
+impl<T, R> Importer<T> for MsgpackImporter<T, R>
 where
     T: for<'de> Deserialize<'de>,
+    R: Read,
+{
+}
+
+impl<T, R> Iterator for MsgpackImporter<T, R>
+where
+    T: for<'de> Deserialize<'de>,
+    R: Read,
 {
     type Item = Event<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use std::io::Read;
         let mut len_buf = [0u8; 4];
         match self.reader.read_exact(&mut len_buf) {
             Ok(()) => {}
@@ -134,5 +156,29 @@ where
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use quent_events::Event;
+    use uuid::Uuid;
+
+    use super::MsgpackImporter;
+
+    #[test]
+    fn imports_from_bytes() {
+        let event = Event::new(Uuid::nil(), 42, "payload".to_string());
+        let payload = rmp_serde::to_vec(&event).unwrap();
+        let mut bytes = (payload.len() as u32).to_be_bytes().to_vec();
+        bytes.extend(payload);
+
+        let mut importer = MsgpackImporter::<String>::from_bytes(bytes);
+        let imported = importer.next().unwrap();
+
+        assert_eq!(imported.id, event.id);
+        assert_eq!(imported.timestamp, event.timestamp);
+        assert_eq!(imported.data, event.data);
+        assert!(importer.next().is_none());
     }
 }

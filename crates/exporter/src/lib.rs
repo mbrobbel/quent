@@ -3,7 +3,10 @@
 
 //! Umbrella crate providing unified exporter/importer creation.
 
-use std::sync::Arc;
+use std::{
+    io::{BufRead, BufReader, Cursor},
+    sync::Arc,
+};
 
 use quent_exporter_types::{Exporter, ExporterError, ExporterResult, Importer, ImporterResult};
 use serde::{Deserialize, Serialize};
@@ -50,24 +53,118 @@ pub enum ImporterOptions {
     Postcard(PostcardImporterOptions),
 }
 
-/// Construct an importer from [`ImporterOptions`].
-pub fn create_importer<T>(kind: &ImporterOptions) -> ImporterResult<Box<dyn Importer<T>>>
+/// A concrete importer selected from [`ImporterOptions`].
+///
+/// This avoids type-erasing the importer behind `Box<dyn Importer<_>>` while
+/// still allowing the format to be selected at runtime.
+pub enum ImporterVariant<T, R = BufReader<std::fs::File>> {
+    #[cfg(feature = "ndjson")]
+    Ndjson(quent_exporter_ndjson::NdjsonImporter<T, R>),
+    #[cfg(feature = "msgpack")]
+    Msgpack(quent_exporter_msgpack::MsgpackImporter<T, R>),
+    #[cfg(feature = "postcard")]
+    Postcard(quent_exporter_postcard::PostcardImporter<T, R>),
+}
+
+impl<T, R> Iterator for ImporterVariant<T, R>
 where
-    T: for<'de> Deserialize<'de> + 'static,
+    T: for<'de> Deserialize<'de>,
+    R: BufRead,
+{
+    type Item = quent_events::Event<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            #[cfg(feature = "ndjson")]
+            Self::Ndjson(importer) => importer.next(),
+            #[cfg(feature = "msgpack")]
+            Self::Msgpack(importer) => importer.next(),
+            #[cfg(feature = "postcard")]
+            Self::Postcard(importer) => importer.next(),
+        }
+    }
+}
+
+impl<T, R> Importer<T> for ImporterVariant<T, R>
+where
+    T: for<'de> Deserialize<'de>,
+    R: BufRead,
+{
+}
+
+/// Construct an importer from [`ImporterOptions`].
+pub fn create_importer<T>(kind: &ImporterOptions) -> ImporterResult<ImporterVariant<T>>
+where
+    T: for<'de> Deserialize<'de>,
 {
     match kind {
         #[cfg(feature = "ndjson")]
-        ImporterOptions::Ndjson(options) => Ok(Box::new(
+        ImporterOptions::Ndjson(options) => Ok(ImporterVariant::Ndjson(
             quent_exporter_ndjson::NdjsonImporter::try_new(options)?,
-        ) as Box<dyn Importer<T>>),
+        )),
         #[cfg(feature = "msgpack")]
-        ImporterOptions::Msgpack(options) => Ok(Box::new(
+        ImporterOptions::Msgpack(options) => Ok(ImporterVariant::Msgpack(
             quent_exporter_msgpack::MsgpackImporter::try_new(options)?,
-        ) as Box<dyn Importer<T>>),
+        )),
         #[cfg(feature = "postcard")]
-        ImporterOptions::Postcard(options) => Ok(Box::new(
+        ImporterOptions::Postcard(options) => Ok(ImporterVariant::Postcard(
             quent_exporter_postcard::PostcardImporter::try_new(options)?,
-        ) as Box<dyn Importer<T>>),
+        )),
+    }
+}
+
+/// Construct an importer from [`ImporterOptions`] using an in-memory byte buffer.
+///
+/// The path in `kind` is used only to choose the importer variant; bytes are not
+/// read from disk.
+pub fn create_importer_from_bytes<T>(
+    kind: &ImporterOptions,
+    bytes: Vec<u8>,
+) -> ImporterResult<ImporterVariant<T, Cursor<Vec<u8>>>>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    match kind {
+        #[cfg(feature = "ndjson")]
+        ImporterOptions::Ndjson(_) => Ok(ImporterVariant::Ndjson(
+            quent_exporter_ndjson::NdjsonImporter::<T, Cursor<Vec<u8>>>::from_bytes(bytes),
+        )),
+        #[cfg(feature = "msgpack")]
+        ImporterOptions::Msgpack(_) => Ok(ImporterVariant::Msgpack(
+            quent_exporter_msgpack::MsgpackImporter::<T, Cursor<Vec<u8>>>::from_bytes(bytes),
+        )),
+        #[cfg(feature = "postcard")]
+        ImporterOptions::Postcard(_) => Ok(ImporterVariant::Postcard(
+            quent_exporter_postcard::PostcardImporter::<T, Cursor<Vec<u8>>>::from_bytes(bytes),
+        )),
+    }
+}
+
+/// Construct an importer from [`ImporterOptions`] using a caller-provided reader.
+///
+/// The path in `kind` is used only to choose the importer variant; bytes are not
+/// read from disk.
+pub fn create_importer_from_reader<T, R>(
+    kind: &ImporterOptions,
+    reader: R,
+) -> ImporterResult<ImporterVariant<T, R>>
+where
+    T: for<'de> Deserialize<'de>,
+    R: BufRead,
+{
+    match kind {
+        #[cfg(feature = "ndjson")]
+        ImporterOptions::Ndjson(_) => Ok(ImporterVariant::Ndjson(
+            quent_exporter_ndjson::NdjsonImporter::from_reader(reader),
+        )),
+        #[cfg(feature = "msgpack")]
+        ImporterOptions::Msgpack(_) => Ok(ImporterVariant::Msgpack(
+            quent_exporter_msgpack::MsgpackImporter::from_reader(reader),
+        )),
+        #[cfg(feature = "postcard")]
+        ImporterOptions::Postcard(_) => Ok(ImporterVariant::Postcard(
+            quent_exporter_postcard::PostcardImporter::from_reader(reader),
+        )),
     }
 }
 
