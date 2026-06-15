@@ -36,13 +36,38 @@ impl ViewerBuilder {
         let cache_key = cache_key(viewer);
         let build_dir = self.build_root.join(cache_key);
         let source_dir = build_dir.join("source");
-        let wrapper_dir = build_dir.join("wrapper");
 
         fs::create_dir_all(&build_dir)?;
         self.checkout(&viewer.source.git, &viewer.source.git_ref, &source_dir)?;
 
-        // Build the viewer wrapper first so it can export the engine's UI bindings.
-        self.write_wrapper(viewer, &source_dir, &wrapper_dir)?;
+        // The model crate may be a member of its own cargo workspace (e.g.
+        // sirius's `instrumentation-model` lives in `rust/Cargo.toml`). Cargo's
+        // `[patch]` only applies from the workspace root being built and does NOT
+        // reach a path dependency belonging to a *foreign* workspace, so an
+        // external wrapper that path-depends on such a model cannot redirect the
+        // model's `rapidsai/quent` git deps to this local checkout. When the
+        // model lives in a workspace, build the wrapper as a member of that
+        // workspace and inject the patch into the workspace root; otherwise use a
+        // standalone wrapper (which is its own workspace root and patches itself).
+        let model_dir = source_dir.join(relative_source_path(&viewer.source.path));
+        let manifest_dir = match find_workspace_root(&model_dir, &source_dir) {
+            Some(workspace_root) => {
+                let wrapper_dir = workspace_root.join("quent-open-wrapper");
+                self.write_wrapper(viewer, &source_dir, &wrapper_dir, false)?;
+                add_workspace_member_and_patch(
+                    &workspace_root,
+                    "quent-open-wrapper",
+                    &self.workspace_root,
+                )?;
+                workspace_root
+            }
+            None => {
+                let wrapper_dir = build_dir.join("wrapper");
+                self.write_wrapper(viewer, &source_dir, &wrapper_dir, true)?;
+                wrapper_dir
+            }
+        };
+
         eprintln!(
             "quent-open: building viewer '{}' (first build compiles dependencies and may take several minutes)",
             viewer.name
@@ -51,12 +76,14 @@ impl ViewerBuilder {
             "cargo",
             &[
                 "build".to_string(),
+                "--package".to_string(),
+                "quent-open-wrapper".to_string(),
                 "--manifest-path".to_string(),
-                wrapper_dir.join("Cargo.toml").display().to_string(),
+                manifest_dir.join("Cargo.toml").display().to_string(),
             ],
-            Some(&wrapper_dir),
+            Some(&manifest_dir),
         )?;
-        let binary = wrapper_dir
+        let binary = manifest_dir
             .join("target")
             .join("debug")
             .join(executable_name("quent-open-wrapper"));
@@ -149,6 +176,7 @@ impl ViewerBuilder {
         viewer: &ViewerConfig,
         source_dir: &Path,
         wrapper_dir: &Path,
+        standalone: bool,
     ) -> Result<()> {
         let package = viewer.source.package.clone().unwrap_or_else(|| {
             package_name_from_git(&viewer.source.git).unwrap_or_else(|| viewer.name.clone())
@@ -159,15 +187,7 @@ impl ViewerBuilder {
         let model_path = self.workspace_root.join("domains/query_engine/model");
         let ui_model_path = self.workspace_root.join("domains/query_engine/ui");
         let analyzer_core_path = self.workspace_root.join("crates/analyzer");
-        let attributes_path = self.workspace_root.join("crates/attributes");
         let events_path = self.workspace_root.join("crates/events");
-        let exporter_path = self.workspace_root.join("crates/exporter");
-        let exporter_types_path = self.workspace_root.join("crates/exporter/types");
-        let instrumentation_path = self.workspace_root.join("crates/instrumentation");
-        let model_core_path = self.workspace_root.join("crates/model");
-        let model_macros_path = self.workspace_root.join("crates/model-macros");
-        let stdlib_path = self.workspace_root.join("crates/stdlib");
-        let time_path = self.workspace_root.join("crates/time");
         let ui_path = self.workspace_root.join("crates/ui");
         let server_features = if viewer.ui.is_some() {
             String::new()
@@ -175,11 +195,8 @@ impl ViewerBuilder {
             ", features = [\"ui\"]".to_string()
         };
 
-        fs::create_dir_all(wrapper_dir.join("src"))?;
-        fs::write(
-            wrapper_dir.join("Cargo.toml"),
-            format!(
-                r#"[package]
+        let mut cargo_toml = format!(
+            r#"[package]
 name = "quent-open-wrapper"
 version = "0.1.0"
 edition = "2024"
@@ -196,54 +213,152 @@ quent-analyzer = {{ path = {} }}
 quent-events = {{ path = {} }}
 quent-ui = {{ path = {} }}
 {} = {{ package = {}, path = {} }}
-
-[patch."https://github.com/rapidsai/quent.git"]
-quent-analyzer = {{ path = {} }}
-quent-attributes = {{ path = {} }}
-quent-events = {{ path = {} }}
-quent-exporter = {{ path = {} }}
-quent-exporter-types = {{ path = {} }}
-quent-instrumentation = {{ path = {} }}
-quent-model = {{ path = {} }}
-quent-model-macros = {{ path = {} }}
-quent-query-engine-analyzer = {{ path = {} }}
-quent-query-engine-model = {{ path = {} }}
-quent-query-engine-ui = {{ path = {} }}
-quent-stdlib = {{ path = {} }}
-quent-time = {{ path = {} }}
-quent-ui = {{ path = {} }}
 "#,
-                toml_string(&server_path.display().to_string()),
-                server_features,
-                toml_string(&analyzer_path.display().to_string()),
-                toml_string(&model_path.display().to_string()),
-                toml_string(&ui_model_path.display().to_string()),
-                toml_string(&analyzer_core_path.display().to_string()),
-                toml_string(&events_path.display().to_string()),
-                toml_string(&ui_path.display().to_string()),
-                package,
-                toml_string(&package),
-                toml_string(&source_path.display().to_string()),
-                toml_string(&analyzer_core_path.display().to_string()),
-                toml_string(&attributes_path.display().to_string()),
-                toml_string(&events_path.display().to_string()),
-                toml_string(&exporter_path.display().to_string()),
-                toml_string(&exporter_types_path.display().to_string()),
-                toml_string(&instrumentation_path.display().to_string()),
-                toml_string(&model_core_path.display().to_string()),
-                toml_string(&model_macros_path.display().to_string()),
-                toml_string(&analyzer_path.display().to_string()),
-                toml_string(&model_path.display().to_string()),
-                toml_string(&ui_model_path.display().to_string()),
-                toml_string(&stdlib_path.display().to_string()),
-                toml_string(&time_path.display().to_string()),
-                toml_string(&ui_path.display().to_string()),
-            ),
-        )?;
+            toml_string(&server_path.display().to_string()),
+            server_features,
+            toml_string(&analyzer_path.display().to_string()),
+            toml_string(&model_path.display().to_string()),
+            toml_string(&ui_model_path.display().to_string()),
+            toml_string(&analyzer_core_path.display().to_string()),
+            toml_string(&events_path.display().to_string()),
+            toml_string(&ui_path.display().to_string()),
+            package,
+            toml_string(&package),
+            toml_string(&source_path.display().to_string()),
+        );
+        // A standalone wrapper is its own workspace root, so it carries the
+        // `[patch]`. When the wrapper is a member of the model's workspace the
+        // patch lives in that workspace root instead (see `build`).
+        if standalone {
+            cargo_toml.push_str(&patch_section(&self.workspace_root, false));
+        }
 
+        fs::create_dir_all(wrapper_dir.join("src"))?;
+        fs::write(wrapper_dir.join("Cargo.toml"), cargo_toml)?;
         fs::write(wrapper_dir.join("src/main.rs"), wrapper_main_rs(viewer)?)?;
         Ok(())
     }
+}
+
+/// Walk up from `model_dir` (inclusive) to `source_dir` (inclusive) looking for
+/// the cargo workspace root whose `Cargo.toml` declares `[workspace]`. Returns
+/// `None` when the model crate is standalone (no enclosing workspace).
+fn find_workspace_root(model_dir: &Path, source_dir: &Path) -> Option<PathBuf> {
+    let mut dir = model_dir;
+    loop {
+        if let Ok(contents) = fs::read_to_string(dir.join("Cargo.toml")) {
+            if contents
+                .lines()
+                .any(|line| line.trim_start().starts_with("[workspace]"))
+            {
+                return Some(dir.to_path_buf());
+            }
+        }
+        if dir == source_dir {
+            return None;
+        }
+        dir = dir.parent()?;
+    }
+}
+
+/// Register the wrapper as a member of the model's workspace and inject the
+/// `rapidsai/quent` patch into that workspace root. The patch must live in the
+/// build-root workspace and cover every quent crate any member references (incl.
+/// the bridge's `quent-codegen`), since cargo resolves the whole workspace.
+///
+/// The manifest is edited as structured TOML rather than by string surgery, so
+/// it copes with a workspace that has no `members` list and merges into any
+/// pre-existing `[patch]` table instead of emitting a duplicate header. Comments
+/// and formatting are not preserved, but this manifest lives in the throwaway
+/// build checkout and is reset by `checkout` on every run.
+fn add_workspace_member_and_patch(
+    source_workspace: &Path,
+    member: &str,
+    quent_workspace: &Path,
+) -> Result<()> {
+    let manifest = source_workspace.join("Cargo.toml");
+    let contents = fs::read_to_string(&manifest)?;
+    let mut doc: toml::Table = toml::from_str(&contents)
+        .map_err(|e| OpenError::Build(format!("parsing {}: {e}", manifest.display())))?;
+
+    let workspace = doc
+        .entry("workspace")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    if let Some(ws) = workspace.as_table_mut() {
+        let members = ws
+            .entry("members")
+            .or_insert_with(|| toml::Value::Array(Vec::new()));
+        if let Some(members) = members.as_array_mut() {
+            if !members.iter().any(|m| m.as_str() == Some(member)) {
+                members.push(toml::Value::String(member.to_string()));
+            }
+        }
+    }
+
+    let patch = doc
+        .entry("patch")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    if let Some(patch) = patch.as_table_mut() {
+        let quent = patch
+            .entry("https://github.com/rapidsai/quent.git")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        if let Some(quent) = quent.as_table_mut() {
+            for (name, rel) in patch_entries(true) {
+                let mut dep = toml::Table::new();
+                dep.insert(
+                    "path".to_string(),
+                    toml::Value::String(quent_workspace.join(rel).display().to_string()),
+                );
+                quent.insert(name.to_string(), toml::Value::Table(dep));
+            }
+        }
+    }
+
+    let rendered = toml::to_string(&doc)
+        .map_err(|e| OpenError::Build(format!("rendering {}: {e}", manifest.display())))?;
+    fs::write(&manifest, rendered)?;
+    Ok(())
+}
+
+/// Quent crates to redirect from `rapidsai/quent` to this local workspace, as
+/// `(crate name, path relative to the workspace root)`. `include_codegen` adds
+/// `quent-codegen`, which a workspace member's bridge crate needs but a
+/// standalone model does not.
+fn patch_entries(include_codegen: bool) -> Vec<(&'static str, &'static str)> {
+    let mut entries = vec![
+        ("quent-analyzer", "crates/analyzer"),
+        ("quent-attributes", "crates/attributes"),
+        ("quent-events", "crates/events"),
+        ("quent-exporter", "crates/exporter"),
+        ("quent-exporter-types", "crates/exporter/types"),
+        ("quent-instrumentation", "crates/instrumentation"),
+        ("quent-model", "crates/model"),
+        ("quent-model-macros", "crates/model-macros"),
+        ("quent-query-engine-analyzer", "domains/query_engine/analyzer"),
+        ("quent-query-engine-model", "domains/query_engine/model"),
+        ("quent-query-engine-ui", "domains/query_engine/ui"),
+        ("quent-stdlib", "crates/stdlib"),
+        ("quent-time", "crates/time"),
+        ("quent-ui", "crates/ui"),
+    ];
+    if include_codegen {
+        entries.push(("quent-codegen", "crates/codegen"));
+    }
+    entries
+}
+
+/// The `[patch."https://github.com/rapidsai/quent.git"]` block redirecting quent
+/// crates to this local workspace, for the standalone wrapper which is its own
+/// (freshly generated) workspace root.
+fn patch_section(quent_workspace: &Path, include_codegen: bool) -> String {
+    let mut section = String::from("\n[patch.\"https://github.com/rapidsai/quent.git\"]\n");
+    for (name, rel) in patch_entries(include_codegen) {
+        section.push_str(&format!(
+            "{name} = {{ path = {} }}\n",
+            toml_string(&quent_workspace.join(rel).display().to_string())
+        ));
+    }
+    section
 }
 
 fn wrapper_main_rs(viewer: &ViewerConfig) -> Result<String> {
