@@ -176,6 +176,10 @@ export function useBulkTimelines<T extends TreeNode>({
           expandConfig,
           groupFsmFilters
         );
+        // A resource group with no resolvable type would be requested with an
+        // empty resource_type_name, which the analyzer rejects — failing the
+        // whole bulk request. Skip it; its typed descendants still get entries.
+        if ('ResourceGroup' in params && !params.ResourceGroup.resource_type_name) continue;
         const resourceTypeName = getResourceTypeName(params);
         const fsmTypeName = getFsmTypeName(params);
         const key = timelineCacheKey({ resourceId: child.id, resourceTypeName, fsmTypeName });

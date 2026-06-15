@@ -99,6 +99,12 @@ export function ResourceTimeline({
 
   const cacheResourceTypeName =
     resourceType === EntityTypeKey.ResourceGroup ? (resourceTypeName ?? '') : '';
+  // A resource group with no resource type has no timeline: requesting one with
+  // an empty resource_type_name is rejected by the analyzer. Such groups are
+  // omitted from the bulk request, so guard the per-row single fetch too (it
+  // would otherwise fall back to /timeline/single with the same empty type) and
+  // just render an empty timeline.
+  const isTypelessGroup = resourceType === EntityTypeKey.ResourceGroup && !resourceTypeName;
   const baseCacheKey = timelineCacheKey({
     resourceId,
     resourceTypeName: cacheResourceTypeName,
@@ -176,7 +182,7 @@ export function ResourceTimeline({
       return fetchSingleTimeline(engineId, request, durationSeconds);
     },
     staleTime: DEFAULT_STALE_TIME,
-    enabled: deferredReady && !preloadedData && bulkInitialized,
+    enabled: deferredReady && !preloadedData && bulkInitialized && !isTypelessGroup,
     placeholderData: keepPreviousData,
   });
 

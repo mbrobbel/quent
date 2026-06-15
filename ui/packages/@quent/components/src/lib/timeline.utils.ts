@@ -661,6 +661,15 @@ export function buildBulkParamsForItem(
  * Collect all visible rows and their bulk request params.
  * A row is visible if it's the root or all of its ancestors are expanded.
  */
+/**
+ * A `ResourceGroup` timeline entry with no resource type. The analyzer rejects
+ * an empty `resource_type_name`, so such entries must not be sent in a bulk
+ * request (one bad entry fails the whole request).
+ */
+export function isEmptyResourceGroupEntry(params: TimelineRequest<TaskFilter>): boolean {
+  return 'ResourceGroup' in params && !params.ResourceGroup.resource_type_name;
+}
+
 export function collectVisibleEntries(
   items: TreeTableItem[],
   expandedIds: Set<string>,
@@ -673,7 +682,7 @@ export function collectVisibleEntries(
   const result: Record<string, TimelineRequest<TaskFilter>> = {};
 
   function walk(item: TreeTableItem) {
-    result[item.id] = buildBulkParamsForItem(
+    const params = buildBulkParamsForItem(
       item,
       selectedTypes,
       entities,
@@ -681,6 +690,15 @@ export function collectVisibleEntries(
       groupFsmFilters,
       operatorId
     );
+    // A resource group only has a timeline for a specific resource type. Groups
+    // with no resolvable type (e.g. the root, or one whose subtree has no
+    // resources of any type) get an empty resource_type_name, which the analyzer
+    // rejects — failing the whole bulk request. Skip those (mirrors the
+    // `!!rootResourceType` guard on the single-timeline path); their typed
+    // descendants are still walked below.
+    if (!isEmptyResourceGroupEntry(params)) {
+      result[item.id] = params;
+    }
 
     if (item.children && expandedIds.has(item.id)) {
       for (const child of item.children) {

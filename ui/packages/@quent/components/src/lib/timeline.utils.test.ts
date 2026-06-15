@@ -20,10 +20,12 @@ import {
   setOperatorOnEntry,
   setOperatorOnEntries,
   findItemById,
+  collectVisibleEntries,
+  isEmptyResourceGroupEntry,
 } from './timeline.utils';
 import type { TimelineSeries, TimelineSeriesEntry } from '../timeline/types';
 import type { TreeTableItem } from '../resource-tree/types';
-import type { TimelineRequest, TaskFilter } from '@quent/utils';
+import type { TimelineRequest, TaskFilter, QueryEntities } from '@quent/utils';
 
 // ---- Helpers ---------------------------------------------------------------
 
@@ -353,5 +355,67 @@ describe('findItemById', () => {
   it('works on a leaf node with no children', () => {
     expect(findItemById(leaf, 'leaf')).toBe(leaf);
     expect(findItemById(leaf, 'other')).toBeUndefined();
+  });
+});
+
+// A resource group with no resolvable resource type would be requested with an
+// empty resource_type_name, which the analyzer rejects — failing the whole bulk
+// request. These cover the guard that keeps such entries out of the request.
+
+function makeGroupItem(
+  id: string,
+  availableResourceTypes: string[],
+  children?: TreeTableItem[]
+): TreeTableItem {
+  return { id, type: 'Operator', entity: null as never, availableResourceTypes, children };
+}
+
+const emptyEntities = { resource_types: {} } as unknown as QueryEntities;
+
+describe('isEmptyResourceGroupEntry', () => {
+  it('is true for a ResourceGroup with an empty resource_type_name', () => {
+    expect(isEmptyResourceGroupEntry(emptyTypeGroupEntry())).toBe(true);
+  });
+
+  it('is false for a ResourceGroup with a resource_type_name', () => {
+    expect(isEmptyResourceGroupEntry(makeGroupEntry())).toBe(false);
+  });
+
+  it('is false for a Resource entry', () => {
+    expect(isEmptyResourceGroupEntry(makeResourceEntry())).toBe(false);
+  });
+});
+
+function emptyTypeGroupEntry(): TimelineRequest<TaskFilter> {
+  return {
+    ResourceGroup: {
+      resource_group_id: 'g1',
+      resource_type_name: '',
+      long_entities_threshold_s: null,
+      entity_filter: baseFilter,
+      app_params: { operator_id: null },
+      config: baseConfig,
+    },
+  };
+}
+
+describe('collectVisibleEntries', () => {
+  it('skips a typeless resource group but keeps typed groups and walks its children', () => {
+    const typedChild = makeGroupItem('typed', ['disk']);
+    const root = makeGroupItem('typeless', [], [typedChild]);
+
+    const result = collectVisibleEntries(
+      [root],
+      new Set(['typeless']),
+      new Map(),
+      emptyEntities,
+      baseConfig
+    );
+
+    expect(result['typeless']).toBeUndefined();
+    const typed = result['typed'];
+    expect(typed && 'ResourceGroup' in typed && typed.ResourceGroup.resource_type_name).toBe(
+      'disk'
+    );
   });
 });
