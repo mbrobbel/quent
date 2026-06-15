@@ -6,6 +6,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("CARGO_FEATURE_UI").is_ok() {
         let ui_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../ui");
         println!("cargo:rerun-if-changed={}", ui_dir.join("src").display());
+        // The app imports most of its code from the workspace packages
+        // (@quent/components, @quent/hooks, …); without tracking these a change
+        // there does not trigger a UI rebuild and the embedded bundle goes stale.
+        println!(
+            "cargo:rerun-if-changed={}",
+            ui_dir.join("packages").display()
+        );
         println!(
             "cargo:rerun-if-changed={}",
             ui_dir.join("index.html").display()
@@ -13,6 +20,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "cargo:rerun-if-changed={}",
             ui_dir.join("package.json").display()
+        );
+        println!(
+            "cargo:rerun-if-changed={}",
+            ui_dir.join("pnpm-lock.yaml").display()
         );
 
         let run_pnpm = |args: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
