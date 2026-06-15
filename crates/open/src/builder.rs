@@ -230,7 +230,7 @@ quent-ui = {{ path = {} }}
         // `[patch]`. When the wrapper is a member of the model's workspace the
         // patch lives in that workspace root instead (see `build`).
         if standalone {
-            cargo_toml.push_str(&patch_section(&self.workspace_root, false));
+            cargo_toml.push_str(&patch_section(&self.workspace_root));
         }
 
         fs::create_dir_all(wrapper_dir.join("src"))?;
@@ -303,13 +303,13 @@ fn add_workspace_member_and_patch(
             .entry("https://github.com/rapidsai/quent.git")
             .or_insert_with(|| toml::Value::Table(toml::Table::new()));
         if let Some(quent) = quent.as_table_mut() {
-            for (name, rel) in patch_entries(true) {
+            for (name, dir) in local_quent_crates(quent_workspace) {
                 let mut dep = toml::Table::new();
                 dep.insert(
                     "path".to_string(),
-                    toml::Value::String(quent_workspace.join(rel).display().to_string()),
+                    toml::Value::String(dir.display().to_string()),
                 );
-                quent.insert(name.to_string(), toml::Value::Table(dep));
+                quent.insert(name, toml::Value::Table(dep));
             }
         }
     }
@@ -320,42 +320,80 @@ fn add_workspace_member_and_patch(
     Ok(())
 }
 
-/// Quent crates to redirect from `rapidsai/quent` to this local workspace, as
-/// `(crate name, path relative to the workspace root)`. `include_codegen` adds
-/// `quent-codegen`, which a workspace member's bridge crate needs but a
-/// standalone model does not.
-fn patch_entries(include_codegen: bool) -> Vec<(&'static str, &'static str)> {
-    let mut entries = vec![
-        ("quent-analyzer", "crates/analyzer"),
-        ("quent-attributes", "crates/attributes"),
-        ("quent-events", "crates/events"),
-        ("quent-exporter", "crates/exporter"),
-        ("quent-exporter-types", "crates/exporter/types"),
-        ("quent-instrumentation", "crates/instrumentation"),
-        ("quent-model", "crates/model"),
-        ("quent-model-macros", "crates/model-macros"),
-        ("quent-query-engine-analyzer", "domains/query_engine/analyzer"),
-        ("quent-query-engine-model", "domains/query_engine/model"),
-        ("quent-query-engine-ui", "domains/query_engine/ui"),
-        ("quent-stdlib", "crates/stdlib"),
-        ("quent-time", "crates/time"),
-        ("quent-ui", "crates/ui"),
-    ];
-    if include_codegen {
-        entries.push(("quent-codegen", "crates/codegen"));
+/// Every quent crate in the local workspace as `(package name, crate dir)`,
+/// derived from the workspace root's `[workspace] members` (which span `crates/`,
+/// `domains/` and `examples/`).
+///
+/// The patch redirects the whole `rapidsai/quent` git source to local paths, so
+/// it must cover *every* quent crate any source-workspace member references —
+/// not a hand-maintained subset, which silently breaks when an engine's
+/// workspace grows a dependency on another quent crate. Cargo ignores patch
+/// entries that aren't in the graph (a harmless "unused patch" warning), so
+/// listing them all is safe.
+fn local_quent_crates(quent_workspace: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(root_manifest) = fs::read_to_string(quent_workspace.join("Cargo.toml")) else {
+        return Vec::new();
+    };
+    let mut crates: Vec<(String, PathBuf)> = workspace_members(&root_manifest)
+        .into_iter()
+        .filter_map(|member| {
+            let dir = quent_workspace.join(member);
+            let name = fs::read_to_string(dir.join("Cargo.toml"))
+                .ok()
+                .as_deref()
+                .and_then(package_name)?;
+            name.starts_with("quent").then_some((name, dir))
+        })
+        .collect();
+    crates.sort();
+    crates
+}
+
+/// The crate paths listed in the workspace root's `[workspace] members`.
+fn workspace_members(root_manifest: &str) -> Vec<String> {
+    toml::from_str::<toml::Table>(root_manifest)
+        .ok()
+        .as_ref()
+        .and_then(|doc| doc.get("workspace"))
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(toml::Value::as_array)
+        .map(|members| {
+            members
+                .iter()
+                .filter_map(|member| member.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Extract the `[package] name` from a `Cargo.toml`'s contents.
+fn package_name(cargo_toml: &str) -> Option<String> {
+    let mut in_package = false;
+    for line in cargo_toml.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_package = line == "[package]";
+        } else if in_package {
+            if let Some(value) = line.strip_prefix("name").and_then(|rest| {
+                let rest = rest.trim_start().strip_prefix('=')?.trim();
+                rest.strip_prefix('"')?.split('"').next()
+            }) {
+                return Some(value.to_string());
+            }
+        }
     }
-    entries
+    None
 }
 
 /// The `[patch."https://github.com/rapidsai/quent.git"]` block redirecting quent
 /// crates to this local workspace, for the standalone wrapper which is its own
 /// (freshly generated) workspace root.
-fn patch_section(quent_workspace: &Path, include_codegen: bool) -> String {
+fn patch_section(quent_workspace: &Path) -> String {
     let mut section = String::from("\n[patch.\"https://github.com/rapidsai/quent.git\"]\n");
-    for (name, rel) in patch_entries(include_codegen) {
+    for (name, dir) in local_quent_crates(quent_workspace) {
         section.push_str(&format!(
             "{name} = {{ path = {} }}\n",
-            toml_string(&quent_workspace.join(rel).display().to_string())
+            toml_string(&dir.display().to_string())
         ));
     }
     section
