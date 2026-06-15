@@ -1,4 +1,5 @@
 target/
+.pixi/
 .DS_Store
 .pnpm-store/
 .rumdl_cache
