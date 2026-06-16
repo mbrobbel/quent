@@ -109,12 +109,7 @@ where
             // Sent when a browser client resumes an interrupted SSE stream.
             const LAST_EVENT_ID: HeaderName = HeaderName::from_static("last-event-id");
             cors = cors
-                .allow_methods([
-                    Method::GET,
-                    Method::POST,
-                    Method::OPTIONS,
-                    Method::DELETE,
-                ])
+                .allow_methods([Method::GET, Method::POST, Method::OPTIONS, Method::DELETE])
                 .allow_headers([
                     CONTENT_TYPE,
                     MCP_SESSION_ID,

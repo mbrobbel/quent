@@ -185,7 +185,13 @@ where
         Parameters(arg): Parameters<ListEnginesArg>,
     ) -> Result<CallToolResult, ErrorData> {
         if arg.with_metadata {
-            json_ok(self.state.analyzers.list_with_metadata().await.map_err(err)?)
+            json_ok(
+                self.state
+                    .analyzers
+                    .list_with_metadata()
+                    .await
+                    .map_err(err)?,
+            )
         } else {
             let engines: Vec<ui::Engine> = self
                 .state
@@ -382,7 +388,12 @@ where
 }
 
 /// Recursively render a [`PlanTree`] node and its children into `out`.
-fn render_plan_tree<M: QueryEngineModel>(model: &M, node: &PlanTree, depth: usize, out: &mut String) {
+fn render_plan_tree<M: QueryEngineModel>(
+    model: &M,
+    node: &PlanTree,
+    depth: usize,
+    out: &mut String,
+) {
     let indent = "  ".repeat(depth);
     let worker = node
         .worker
@@ -401,7 +412,10 @@ fn render_plan_tree<M: QueryEngineModel>(model: &M, node: &PlanTree, depth: usiz
         .collect();
     operator_names.sort();
     if !operator_names.is_empty() {
-        out.push_str(&format!("{indent}  operators: {}\n", operator_names.join(", ")));
+        out.push_str(&format!(
+            "{indent}  operators: {}\n",
+            operator_names.join(", ")
+        ));
     }
 
     for child in &node.children {
