@@ -63,11 +63,11 @@ int main() {
     queue->operating(quent::queue::Operating{.capacity_entries = 0});
 
     // Construct a memory pool (resizable).
-    auto mem_pool = quent::memory_pool::create(
-        *ctx, quent::memory_pool::Initializing{
-                  .instance_name = "my_memory_pool",
-                  .parent_group_id = worker_id,
-              });
+    auto mem_pool =
+        quent::memory_pool::create(*ctx, quent::memory_pool::Initializing{
+                                             .instance_name = "my_memory_pool",
+                                             .parent_group_id = worker_id,
+                                         });
     mem_pool->operating(quent::memory_pool::Operating{.capacity_bytes = 1337});
     mem_pool->resizing();
     mem_pool->operating(quent::memory_pool::Operating{.capacity_bytes = 2048});
@@ -99,12 +99,14 @@ int main() {
                                         });
 
     // Queue a task. The entry transition returns an FSM handle.
-    auto task = quent::task::create(*ctx, quent::task::Queued{
-                                              .instance_name = "my_task_31415",
-                                              .index = 1,
-                                              .worker = worker_id,
-                                              .queue_resource_id = queue->uuid(),
-                                          });
+    auto task =
+        quent::task::create(*ctx, quent::task::Queued{
+                                      .instance_name = "my_task_31415",
+                                      .index = 1,
+                                      .worker = worker_id,
+                                      .queue_resource_id = queue->uuid(),
+                                      .queue_capacity_entries = 1,
+                                  });
 
     // First computing transition — thread usage only, no memory pool.
     task->computing(quent::task::Computing{
