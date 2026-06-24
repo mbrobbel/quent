@@ -34,6 +34,7 @@ model! {
         quent_stdlib::memory::Memory,
         quent_stdlib::processor::Processor,
         quent_stdlib::channel::Channel,
+        analyzer_package: "quent-simulator-analyzer",
     }
 }
 
