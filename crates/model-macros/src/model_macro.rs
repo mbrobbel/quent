@@ -98,33 +98,6 @@ impl Parse for DefineModelInput {
     }
 }
 
-#[cfg(test)]
-mod parse_tests {
-    use super::DefineModelInput;
-
-    #[test]
-    fn parses_analyzer_package_directive() {
-        let input: DefineModelInput =
-            syn::parse_str(r#"M { root: a::Root, b::Comp, analyzer_package: "my-analyzer" }"#)
-                .unwrap();
-        assert_eq!(input.components.len(), 1);
-        assert_eq!(
-            input.analyzer_package.map(|l| l.value()),
-            Some("my-analyzer".to_string())
-        );
-    }
-
-    #[test]
-    fn analyzer_package_prefixed_component_path_is_not_the_directive() {
-        // A component path whose first segment is literally `analyzer_package`
-        // (followed by `::`) must parse as a component, not the directive.
-        let input: DefineModelInput =
-            syn::parse_str("M { root: a::Root, analyzer_package::Widget }").unwrap();
-        assert_eq!(input.components.len(), 1);
-        assert!(input.analyzer_package.is_none());
-    }
-}
-
 /// Extract the last segment of a path as an Ident.
 fn last_segment(path: &Path) -> Ident {
     path.segments.last().unwrap().ident.clone()
@@ -508,4 +481,31 @@ pub fn expand_instrumentation(input: TokenStream) -> syn::Result<TokenStream> {
     Ok(quote! {
         #impl_macro_name!();
     })
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::DefineModelInput;
+
+    #[test]
+    fn parses_analyzer_package_directive() {
+        let input: DefineModelInput =
+            syn::parse_str(r#"M { root: a::Root, b::Comp, analyzer_package: "my-analyzer" }"#)
+                .unwrap();
+        assert_eq!(input.components.len(), 1);
+        assert_eq!(
+            input.analyzer_package.map(|l| l.value()),
+            Some("my-analyzer".to_string())
+        );
+    }
+
+    #[test]
+    fn analyzer_package_prefixed_component_path_is_not_the_directive() {
+        // A component path whose first segment is literally `analyzer_package`
+        // (followed by `::`) must parse as a component, not the directive.
+        let input: DefineModelInput =
+            syn::parse_str("M { root: a::Root, analyzer_package::Widget }").unwrap();
+        assert_eq!(input.components.len(), 1);
+        assert!(input.analyzer_package.is_none());
+    }
 }
