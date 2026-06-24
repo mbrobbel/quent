@@ -21,12 +21,15 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
-use syn::{Path, Token};
+use syn::{LitStr, Path, Token};
 
 struct DefineModelInput {
     name: Ident,
     root: Path,
     components: Vec<Path>,
+    /// Optional `analyzer_package: "<crate>"`: the cargo package providing this
+    /// model's `QuentViewer` entry, recorded in the provenance sidecar.
+    analyzer_package: Option<LitStr>,
 }
 
 impl Parse for DefineModelInput {
@@ -56,9 +59,31 @@ impl Parse for DefineModelInput {
             content.parse::<Token![,]>()?;
         }
 
+        // Remaining entries are component paths, plus an optional
+        // `analyzer_package: "<crate>"` directive. It is detected by its leading
+        // keyword *followed by a single `:`*, so a component path through a crate
+        // or module named `analyzer_package` (`analyzer_package::Foo`, whose `::`
+        // is not `Token![:]`) is still parsed as a component.
         let mut components = Vec::new();
+        let mut analyzer_package = None;
         while !content.is_empty() {
-            components.push(content.parse::<Path>()?);
+            let is_analyzer_package = content
+                .cursor()
+                .ident()
+                .is_some_and(|(id, _)| id == "analyzer_package")
+                && content.peek2(Token![:])
+                && !content.peek2(Token![::]);
+            if is_analyzer_package {
+                content.parse::<Ident>()?;
+                content.parse::<Token![:]>()?;
+                let lit: LitStr = content.parse()?;
+                if analyzer_package.is_some() {
+                    return Err(syn::Error::new_spanned(lit, "duplicate `analyzer_package`"));
+                }
+                analyzer_package = Some(lit);
+            } else {
+                components.push(content.parse::<Path>()?);
+            }
             if content.peek(Token![,]) {
                 content.parse::<Token![,]>()?;
             }
@@ -68,7 +93,35 @@ impl Parse for DefineModelInput {
             name,
             root,
             components,
+            analyzer_package,
         })
+    }
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::DefineModelInput;
+
+    #[test]
+    fn parses_analyzer_package_directive() {
+        let input: DefineModelInput =
+            syn::parse_str(r#"M { root: a::Root, b::Comp, analyzer_package: "my-analyzer" }"#)
+                .unwrap();
+        assert_eq!(input.components.len(), 1);
+        assert_eq!(
+            input.analyzer_package.map(|l| l.value()),
+            Some("my-analyzer".to_string())
+        );
+    }
+
+    #[test]
+    fn analyzer_package_prefixed_component_path_is_not_the_directive() {
+        // A component path whose first segment is literally `analyzer_package`
+        // (followed by `::`) must parse as a component, not the directive.
+        let input: DefineModelInput =
+            syn::parse_str("M { root: a::Root, analyzer_package::Widget }").unwrap();
+        assert_eq!(input.components.len(), 1);
+        assert!(input.analyzer_package.is_none());
     }
 }
 
@@ -252,6 +305,16 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
          with no collector at capture time."
     );
 
+    // Emit a `ModelSource::analyzer_package()` override only when declared.
+    let analyzer_package_method = match &input.analyzer_package {
+        Some(lit) => quote! {
+            fn analyzer_package() -> Option<&'static str> {
+                Some(#lit)
+            }
+        },
+        None => quote! {},
+    };
+
     let output = quote! {
         #[doc = #doc_model]
         pub type #model_type = quent_model::Model<#model_tuple>;
@@ -293,6 +356,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                     option_env!("QUENT_SOURCE_BUILT_AT"),
                 )
             }
+            #analyzer_package_method
         }
 
         impl #name {
