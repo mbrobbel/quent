@@ -111,11 +111,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {{
 mod tests {
     use super::*;
     use crate::spec::{Format, GitPin, ViewerSpec};
-    use std::path::PathBuf;
 
     fn spec() -> ViewerSpec {
         ViewerSpec {
-            root: PathBuf::from("/data/ctx"),
             format: Format::Msgpack,
             analyzer_package: "quent-simulator-analyzer".into(),
             quent: GitPin {
