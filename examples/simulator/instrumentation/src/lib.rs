@@ -36,6 +36,7 @@ model! {
         quent_stdlib::processor::Processor,
         quent_stdlib::channel::Channel,
     },
+    analyzer: "quent-simulator-analyzer",
 }
 
 instrumentation!(Simulator);
