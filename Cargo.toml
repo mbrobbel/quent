@@ -6,6 +6,10 @@ members = [
     "crates/attributes",
     "crates/build-info",
     "crates/codegen",
+    # Codegen scaffolder CLI. In `members` but excluded from `default-members`
+    # (below) so default builds/tests skip it; build explicitly with
+    # `-p quent-codegen-cli`.
+    "crates/codegen-cli",
     "crates/collector/server",
     "crates/collector/client",
     "crates/collector/proto",

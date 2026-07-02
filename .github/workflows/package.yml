@@ -1,0 +1,126 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Reusable workflow: build codegen artifacts for a quent model from a quent.toml.
+#
+# External repos call it as:
+#   jobs:
+#     wheel:
+#       uses: rapidsai/quent/.github/workflows/package.yml@<tag-or-sha>
+#       with:
+#         manifest: quent.toml          # path to quent.toml (relative to checkout root)
+#         quent-ref: <tag-or-sha>       # quent ref used to install the CLI + as the [quent] git dep
+#
+# The workflow auto-detects quent's own repo (builds the CLI from the checkout);
+# any other repo installs the CLI from rapidsai/quent@<quent-ref>.
+#
+# Toolchain: steps run under `pixi run`, so the caller's checkout must provide a
+# Pixi environment with rust, maturin, and libprotobuf (protoc >= 3.15). See
+# crates/codegen-cli/README.md for a minimal pixi.toml.
+name: Package
+
+on:
+  workflow_call:
+    inputs:
+      manifest:
+        description: "Path to the quent.toml manifest (relative to the checkout root)."
+        type: string
+        required: false
+        default: "quent.toml"
+      out:
+        description: "Artifact output directory (relative to the checkout root)."
+        type: string
+        required: false
+        default: "dist"
+      artifact-prefix:
+        description: "Prefix for uploaded artifact names (`<prefix>-python-<platform>`)."
+        type: string
+        required: false
+        default: "wheels"
+      quent-ref:
+        description: "quent git ref (tag or SHA) used to install the CLI. Required when calling from a non-quent repository; quent's own repo builds the CLI from the checkout instead."
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Phase A builds the Python wheel target only.
+  python:
+    name: python (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            platform: linux-aarch64
+          - runner: macos-15
+            platform: macos-arm64
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
+        with:
+          cache: true
+
+      # Build the CLI from a local quent checkout, or install it from git.
+      # pixi provides rust/maturin/cmake and a modern protoc (libprotobuf).
+      - name: Provision quent-codegen
+        id: cli
+        shell: bash
+        env:
+          QUENT_REF: ${{ inputs.quent-ref }}
+        run: |
+          set -euo pipefail
+          if [ -f crates/codegen-cli/Cargo.toml ]; then
+            echo "building quent-codegen from the local checkout"
+            pixi run cargo build -p quent-codegen-cli --locked
+            echo "bin=$PWD/target/debug/quent-codegen" >> "$GITHUB_OUTPUT"
+          elif [ -n "${QUENT_REF}" ]; then
+            echo "installing quent-codegen from rapidsai/quent@${QUENT_REF}"
+            pixi run cargo install --git https://github.com/rapidsai/quent \
+              --rev "${QUENT_REF}" --locked --root "${HOME}/.quent-cli" quent-codegen-cli
+            echo "bin=${HOME}/.quent-cli/bin/quent-codegen" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::input 'quent-ref' is required when calling package.yml from a non-quent repository" >&2
+            exit 1
+          fi
+
+      - name: Build wheel
+        shell: bash
+        env:
+          QUENT_CODEGEN: ${{ steps.cli.outputs.bin }}
+          MANIFEST: ${{ inputs.manifest }}
+          OUT: ${{ inputs.out }}
+          QUENT_REF: ${{ inputs.quent-ref }}
+        run: |
+          set -euo pipefail
+          # For external callers, make quent-ref authoritative for the quent code
+          # compiled into the wheel (overriding the manifest's [quent]). quent's
+          # own repo builds locally and uses the manifest's in-repo path dep.
+          quent_args=()
+          if [ ! -f crates/codegen-cli/Cargo.toml ] && [ -n "${QUENT_REF}" ]; then
+            quent_args=(--quent-git https://github.com/rapidsai/quent --quent-rev "${QUENT_REF}")
+          fi
+          if [ ${#quent_args[@]} -gt 0 ]; then
+            pixi run "${QUENT_CODEGEN}" build --manifest "${MANIFEST}" --targets python --out "${OUT}" "${quent_args[@]}"
+          else
+            pixi run "${QUENT_CODEGEN}" build --manifest "${MANIFEST}" --targets python --out "${OUT}"
+          fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-python-${{ matrix.platform }}
+          path: ${{ inputs.out }}/python/*.whl
+          if-no-files-found: error

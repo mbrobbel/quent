@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Packaging manifest for the query-engine domain model. Consumed by the
+# `quent-codegen` CLI (crates/codegen-cli) to scaffold bridge crates and build
+# codegen artifacts. See .github/workflows/qe-package.yml.
+
+[model]
+# The query-engine model crate (defines `model! { name: QueryEngine, ... }`,
+# which generates the `QueryEngineModel` type).
+package = "quent-query-engine-model"
+path = "model"
+name = "QueryEngine"
+
+[model.instrumentation]
+# The model crate does not call `instrumentation!`, so generate a wrapper.
+generate = true
+
+[quent]
+# In-repo build: point generated crates at this checkout via path deps.
+# External repos would use `git`/`rev` here instead.
+path = "../.."
+
+[python]
+package = "quent-qe"
+module_name = "quent_qe"

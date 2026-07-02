@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Builds the query-engine Python wheel via the reusable `package.yml` workflow.
+# This is quent's in-repo demonstrator + self-test of the codegen packaging.
+name: QE Package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.rs"
+      - "**/*.proto"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "domains/query_engine/quent.toml"
+      - ".github/workflows/package.yml"
+      - ".github/workflows/qe-package.yml"
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - "**/*.proto"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "domains/query_engine/quent.toml"
+      - ".github/workflows/package.yml"
+      - ".github/workflows/qe-package.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qe-wheel:
+    uses: ./.github/workflows/package.yml
+    with:
+      manifest: domains/query_engine/quent.toml
+      out: domains/query_engine/dist
+      artifact-prefix: quent-qe

@@ -1,6 +1,9 @@
 target/
 /data/
 /events/
+# quent-codegen scaffolder output + generated crates
+dist/
+.quent-scaffold/
 .DS_Store
 .pnpm-store/
 .rumdl_cache

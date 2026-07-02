@@ -2007,6 +2007,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "quent-codegen-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "quent-collector"
 version = "0.1.0"
 dependencies = [

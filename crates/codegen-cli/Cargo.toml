@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "quent-codegen-cli"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "quent-codegen"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5.58", features = ["derive"] }
+serde = { workspace = true }
+thiserror.workspace = true
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
