@@ -47,13 +47,9 @@ pub(crate) fn doc_attr_or(docs: Option<&str>, fallback: &str) -> TokenStream {
 /// Case-convert a schema identifier without splitting letter/digit boundaries,
 /// so names such as `u8` or `http2` are preserved rather than mangled.
 pub(crate) fn to_case(id: &Identifier, case: Case) -> String {
-    const KEEP_DIGITS: &[Boundary] = &[
-        Boundary::LOWER_DIGIT,
-        Boundary::UPPER_DIGIT,
-        Boundary::DIGIT_LOWER,
-        Boundary::DIGIT_UPPER,
-    ];
-    id.to_string().without_boundaries(KEEP_DIGITS).to_case(case)
+    id.to_string()
+        .remove_boundaries(&Boundary::digits())
+        .to_case(case)
 }
 
 /// Build an identifier from an already-cased name, raw-escaping Rust keywords.
