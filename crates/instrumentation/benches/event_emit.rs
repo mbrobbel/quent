@@ -17,9 +17,10 @@
 //! asynchronously in the forwarder task, so the numbers reflect what
 //! callers actually pay per event at the API boundary.
 
+use std::hint::black_box;
 use std::path::Path;
 
-use criterion::{BenchmarkGroup, Criterion, Throughput, black_box, measurement::WallTime};
+use criterion::{BenchmarkGroup, Criterion, Throughput, measurement::WallTime};
 use pprof::criterion::{Output, PProfProfiler};
 use quent_collector::{CollectorSink, deserialize_event, server::CollectorService};
 use quent_collector_proto::collector_server::CollectorServer;
