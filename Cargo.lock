@@ -2794,6 +2794,7 @@ dependencies = [
 name = "quent-codegen"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "convert_case",
  "prettyplease 0.3.0",
  "proc-macro2",
@@ -2801,9 +2802,13 @@ dependencies = [
  "quent-model",
  "quent-query-engine-model",
  "quent-simulator-instrumentation",
+ "quent-yaml",
  "quote",
+ "semver",
  "serde",
  "syn 3.0.5",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

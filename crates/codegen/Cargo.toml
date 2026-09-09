@@ -5,16 +5,21 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+clap = { version = "4.5.58", features = ["derive"] }
 convert_case = "0.11"
 prettyplease.workspace = true
 proc-macro2 = "1"
 quent-model = { path = "../model" }
+quent-yaml = { path = "../yaml" }
 quote = "1"
+semver = "1"
+serde = { workspace = true, features = ["derive"] }
 syn.workspace = true
+toml = "1.1"
 
 [dev-dependencies]
 quent-query-engine-model = { path = "../../domains/query_engine/model" }
 quent-readme-example = { package = "quent-legacy-readme-example", path = "../../examples/legacy/readme" }
 quent-simulator-instrumentation = { path = "../../experimental/vibe/simulator/instrumentation" }
-serde = { workspace = true, features = ["derive"] }
 syn.workspace = true
+tempfile = "3"
